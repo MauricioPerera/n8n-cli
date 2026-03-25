@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.js.map
+
+# Config files with secrets
+.n8nrc
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

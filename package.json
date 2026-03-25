@@ -1,0 +1,36 @@
+{
+  "name": "n8n-cli",
+  "version": "1.0.0",
+  "description": "CLI for the n8n REST API — designed for AI agents and automation pipelines",
+  "main": "dist/index.js",
+  "bin": { "n8n-cli": "dist/index.js" },
+  "keywords": ["n8n", "cli", "workflow", "automation", "api", "ai-agent"],
+  "author": "Mauricio Perera",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MauricioPerera/n8n-cli.git"
+  },
+  "homepage": "https://github.com/MauricioPerera/n8n-cli",
+  "bugs": "https://github.com/MauricioPerera/n8n-cli/issues",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "sucrase src -d dist --transforms typescript,imports",
+    "start": "node dist/index.js",
+    "test": "node tests/run.js",
+    "test:all": "node tests/run.js --all-profiles",
+    "test:profile": "node tests/run.js --profile",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "sucrase": "^3.35.0",
+    "typescript": "^5.6.3"
+  }
+}
