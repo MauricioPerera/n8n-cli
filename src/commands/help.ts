@@ -74,8 +74,228 @@ export function metaCmd(): Command {
       out(FULL_SCHEMA.patterns);
     });
 
+  cmd
+    .command("workflow-template")
+    .description("Print a complete workflow JSON template with all fields documented")
+    .action(() => {
+      out(WORKFLOW_TEMPLATE);
+    });
+
+  cmd
+    .command("credential-guide")
+    .description("Explain how credentials map into workflow node parameters")
+    .action(() => {
+      out(CREDENTIAL_GUIDE);
+    });
+
+  cmd
+    .command("ai-recipes")
+    .description("Multi-step operation recipes for AI agents building n8n workflows")
+    .action(() => {
+      out(AI_RECIPES);
+    });
+
   return cmd;
 }
+
+// ─── WORKFLOW TEMPLATE ───────────────────────────────────────────────────────
+
+const WORKFLOW_TEMPLATE = {
+  description: "Template showing the exact JSON structure n8n expects when creating a workflow.",
+  template: {
+    name: "My Workflow",
+    nodes: [
+      {
+        name: "Trigger Node (unique display name)",
+        type: "n8n-nodes-base.webhook (n8nType from 'nodes get')",
+        typeVersion: 2,
+        position: [0, 0],
+        parameters: {
+          httpMethod: "POST",
+          path: "my-hook",
+          _note: "Parameter keys must match properties[].name from 'nodes get <type>'",
+        },
+      },
+      {
+        name: "Action Node",
+        type: "n8n-nodes-base.slack",
+        typeVersion: 2,
+        position: [250, 0],
+        parameters: {
+          resource: "message",
+          operation: "post",
+          text: "={{ $json.body.message }}",
+        },
+        credentials: {
+          slackApi: {
+            id: "<id-from-credentials-list>",
+            name: "Display name",
+          },
+        },
+      },
+    ],
+    connections: {
+      "Trigger Node (unique display name)": {
+        main: [
+          [
+            {
+              node: "Action Node",
+              type: "main",
+              index: 0,
+            },
+          ],
+        ],
+      },
+    },
+    settings: {
+      executionOrder: "v1",
+    },
+  },
+  rules: {
+    node_name: "Must be unique within the workflow. Used as key in connections object.",
+    node_type: "Exact n8nType string from 'nodes get'. Case-sensitive.",
+    typeVersion: "Use latest version from 'nodes get' → version[] array.",
+    position: "[x, y] pixel coordinates. Space nodes ~250px apart horizontally.",
+    parameters: "Keys must match properties[].name from 'nodes get <type>'.",
+    credentials: "Object keyed by credential type (from nodes get → credentials[]), value is {id, name}. Get ID from 'credentials list'.",
+    connection_types: {
+      main: "Standard data flow. Used by most nodes.",
+      ai_languageModel: "LLM provider → AI agent.",
+      ai_memory: "Memory provider → AI agent.",
+      ai_tool: "Tool → AI agent.",
+      ai_vectorStore: "Vector store → memory or retrieval node.",
+      ai_outputParser: "Output parser → AI chain.",
+    },
+  },
+  expressions: {
+    current_item: "={{ $json.fieldName }}",
+    other_node: "={{ $('Node Name').item.json.field }}",
+    first_input: "={{ $input.first().json.field }}",
+    timestamp: "={{ $now.toISO() }}",
+    instance_var: "={{ $vars.MY_VAR }}",
+    env_var: "={{ $env.MY_ENV }}",
+  },
+};
+
+// ─── CREDENTIAL GUIDE ────────────────────────────────────────────────────────
+
+const CREDENTIAL_GUIDE = {
+  description: "How to discover, create, and use credentials in workflow nodes.",
+  steps: [
+    {
+      step: 1,
+      action: "Find what credential type a node needs",
+      command: "n8n-cli nodes get <n8nType>",
+      output: "Look at the 'credentials' array. Each entry is a credential type name (e.g. 'slackApi', 'openAiApi').",
+    },
+    {
+      step: 2,
+      action: "Check if you already have a credential of that type",
+      command: "n8n-cli credentials list --fields id,name,type --all",
+      output: "Look for a credential where type matches the needed credential type.",
+    },
+    {
+      step: 3,
+      action: "If you need to create a new credential, discover required fields",
+      command: "n8n-cli credentials schema <credentialType>",
+      output: "Returns all fields with name, type, required flag.",
+    },
+    {
+      step: 4,
+      action: "Create the credential",
+      command: "n8n-cli credentials create --name 'My Credential' --type <type> --data '{\"field\":\"value\"}'",
+      output: "Returns the new credential with its ID.",
+    },
+    {
+      step: 5,
+      action: "Reference the credential in the workflow node",
+      example: {
+        node_credentials_field: {
+          slackApi: { id: "<credential-id>", name: "My Credential" },
+        },
+      },
+      note: "The key ('slackApi') is the credential type name. The id comes from step 2 or 4.",
+    },
+  ],
+  important_notes: [
+    "Credentials are NOT passed as node parameters. They go in a separate 'credentials' field on the node object.",
+    "OAuth credentials (Gmail, Google Drive) require browser-based auth flow — they cannot be created via API. Use API key or token-based alternatives.",
+    "credential IDs are instance-specific. When cloning workflows across instances, credentials must be re-mapped.",
+  ],
+};
+
+// ─── AI RECIPES ──────────────────────────────────────────────────────────────
+
+const AI_RECIPES = {
+  description: "Multi-step operation recipes for AI agents working with n8n.",
+  recipes: [
+    {
+      name: "Build a complete workflow from scratch",
+      steps: [
+        "n8n-cli nodes sync                                    # ensure catalog is fresh",
+        "n8n-cli nodes search '<what you need>'                # discover relevant nodes",
+        "n8n-cli nodes get <n8nType>                           # get parameter schema for each node",
+        "n8n-cli credentials list --fields id,name,type --all  # find existing credentials",
+        "n8n-cli meta workflow-template                        # get JSON template structure",
+        "# Compose JSON using template + node parameters + credential IDs",
+        "n8n-cli workflows create --data '<json>'              # deploy",
+        "n8n-cli workflows activate <id>                       # enable triggers",
+      ],
+    },
+    {
+      name: "Clone workflow between instances",
+      steps: [
+        "n8n-cli --profile source workflows get <id>           # export full workflow",
+        "# Remove instance-specific fields: id, createdAt, updatedAt, versionId, shared",
+        "# Re-map credential IDs to target instance credentials",
+        "cat cleaned.json | n8n-cli --profile target workflows create",
+      ],
+    },
+    {
+      name: "Debug a failing workflow",
+      steps: [
+        "n8n-cli executions list --workflow-id <id> --status error --limit 5 --fields id,startedAt,stoppedAt",
+        "n8n-cli executions get <exec-id> --include-data       # full node I/O data",
+        "# Inspect the 'data' field — each node has 'executionData' with input/output",
+        "# Fix the problematic node parameters",
+        "n8n-cli workflows update <id> --data '<fixed-json>'",
+      ],
+    },
+    {
+      name: "Batch retry failed executions",
+      steps: [
+        "n8n-cli executions list --workflow-id <id> --status error --all --fields id",
+        "# For each execution ID:",
+        "n8n-cli executions retry <exec-id>",
+        "# Use --load-workflow to retry with latest workflow version instead of snapshot",
+      ],
+    },
+    {
+      name: "Audit and clean up an instance",
+      steps: [
+        "n8n-cli audit run                                     # security audit",
+        "n8n-cli workflows list --all --fields id,name,active,updatedAt",
+        "# Identify inactive/abandoned workflows",
+        "n8n-cli executions list --status error --all --fields id,workflowId",
+        "# Identify workflows with high error rates",
+      ],
+    },
+    {
+      name: "Set up a multi-node AI agent workflow",
+      steps: [
+        "n8n-cli nodes search 'AI agent'                      # find agent node",
+        "n8n-cli nodes search 'chat trigger'                   # find trigger",
+        "n8n-cli nodes search 'openai'                         # find LLM",
+        "n8n-cli nodes get @n8n/n8n-nodes-langchain.agent      # get agent params",
+        "# AI workflows use specialized connection types:",
+        "# - ai_languageModel: LLM → Agent",
+        "# - ai_memory: Memory → Agent",
+        "# - ai_tool: Tool → Agent",
+        "# Build connections accordingly (see workflow-template for types)",
+      ],
+    },
+  ],
+};
 
 // ─── SCHEMA DEFINITION ────────────────────────────────────────────────────────
 
@@ -297,10 +517,13 @@ const FULL_SCHEMA = {
       name: "meta",
       description: "Machine-readable CLI metadata for AI consumption",
       commands: [
-        { name: "schema",         synopsis: "meta schema", description: "Full CLI schema as JSON: all commands, options, examples, and exit codes." },
-        { name: "exit-codes",     synopsis: "meta exit-codes", description: "Explain what each exit code means." },
-        { name: "common-options", synopsis: "meta common-options", description: "Options available on most commands (--all, --fields, --limit, --cursor)." },
-        { name: "patterns",       synopsis: "meta patterns", description: "Common usage patterns and recipes for AI agents." },
+        { name: "schema",             synopsis: "meta schema", description: "Full CLI schema as JSON: all commands, options, examples, and exit codes." },
+        { name: "exit-codes",         synopsis: "meta exit-codes", description: "Explain what each exit code means." },
+        { name: "common-options",     synopsis: "meta common-options", description: "Options available on most commands (--all, --fields, --limit, --cursor)." },
+        { name: "patterns",           synopsis: "meta patterns", description: "Common usage patterns and recipes for AI agents." },
+        { name: "workflow-template",  synopsis: "meta workflow-template", description: "Complete workflow JSON template with all fields documented, connection types, and expression syntax." },
+        { name: "credential-guide",   synopsis: "meta credential-guide", description: "Step-by-step guide: how to discover, create, and map credentials into workflow nodes." },
+        { name: "ai-recipes",         synopsis: "meta ai-recipes", description: "Multi-step operation recipes for AI agents: build workflow, clone, debug, audit, AI agent setup." },
       ],
     },
     {
