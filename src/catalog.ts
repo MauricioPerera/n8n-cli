@@ -1,9 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import axios from "axios";
 import { resolveProfile, resolveProfileName } from "./config.js";
-import { writeError } from "./api.js";
+import { writeError, rawFetch, type RawFetchOpts } from "./api.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -230,68 +229,61 @@ export async function syncCatalog(): Promise<CatalogFile> {
   }
 
   const baseUrl = profile.baseUrl.replace(/\/$/, "");
-  const headers: Record<string, string> = {
-    "X-N8N-API-KEY": profile.apiKey,
-    "Content-Type": "application/json",
+  const fetchOpts: RawFetchOpts = {
+    baseUrl,
+    apiKey: profile.apiKey,
+    timeout: profile.timeout ?? 30000,
   };
-  const timeout = profile.timeout ?? 30000;
 
   let rawNodes: RawNode[] = [];
 
   // Strategy 1: /types/nodes.json (static file, works on most versions)
   if (rawNodes.length === 0) {
-    try {
-      const res = await axios.get(`${baseUrl}/types/nodes.json`, { headers, timeout });
-      if (Array.isArray(res.data)) {
-        rawNodes = res.data;
-      }
-    } catch {
-      // Fall through
+    const res = await rawFetch(fetchOpts, "GET", "/types/nodes.json");
+    if (res.ok && Array.isArray(res.data)) {
+      rawNodes = res.data;
     }
   }
 
   // Strategy 2: /api/v1/node-types (public API, newer n8n)
   if (rawNodes.length === 0) {
-    try {
-      const res = await axios.get(`${baseUrl}/api/v1/node-types`, { headers, timeout });
+    const res = await rawFetch(fetchOpts, "GET", "/api/v1/node-types");
+    if (res.ok) {
       const data = res.data;
       if (Array.isArray(data)) {
         rawNodes = data;
-      } else if (data && Array.isArray(data.data)) {
-        rawNodes = data.data;
+      } else if (data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).data)) {
+        rawNodes = (data as Record<string, unknown>).data as RawNode[];
       }
-    } catch {
-      // Fall through
     }
   }
 
   // Strategy 3: /rest/node-types (internal API with cookie auth)
   if (rawNodes.length === 0) {
-    try {
-      const res = await axios.post(`${baseUrl}/rest/node-types`, {}, { headers, timeout });
-      if (Array.isArray(res.data)) {
-        rawNodes = res.data;
-      } else if (res.data?.data && Array.isArray(res.data.data)) {
-        rawNodes = res.data.data;
+    const res = await rawFetch(fetchOpts, "POST", "/rest/node-types", {});
+    if (res.ok) {
+      const data = res.data;
+      if (Array.isArray(data)) {
+        rawNodes = data;
+      } else if (data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).data)) {
+        rawNodes = (data as Record<string, unknown>).data as RawNode[];
       }
-    } catch {
-      // Fall through
     }
   }
 
   // Strategy 4: Fallback — extract unique node types from existing workflows
   if (rawNodes.length === 0) {
     try {
-      let allWorkflows: Record<string, unknown>[] = [];
+      const allWorkflows: Record<string, unknown>[] = [];
       let cursor: string | undefined;
       do {
-        const params: Record<string, unknown> = { limit: 250 };
-        if (cursor) params.cursor = cursor;
-        const res = await axios.get(`${baseUrl}/api/v1/workflows`, { headers, timeout, params });
-        const body = res.data;
+        const cursorParam = cursor ? `&cursor=${cursor}` : "";
+        const res = await rawFetch(fetchOpts, "GET", `/api/v1/workflows?limit=250${cursorParam}`);
+        if (!res.ok) break;
+        const body = res.data as Record<string, unknown>;
         if (body && Array.isArray(body.data)) {
-          allWorkflows.push(...body.data);
-          cursor = body.nextCursor;
+          allWorkflows.push(...(body.data as Record<string, unknown>[]));
+          cursor = body.nextCursor as string | undefined;
         } else {
           break;
         }
@@ -299,7 +291,7 @@ export async function syncCatalog(): Promise<CatalogFile> {
 
       const nodeMap = new Map<string, RawNode>();
       for (const wf of allWorkflows) {
-        const nodes = (wf as Record<string, unknown>).nodes;
+        const nodes = wf.nodes;
         if (!Array.isArray(nodes)) continue;
         for (const n of nodes) {
           const node = n as Record<string, unknown>;
@@ -308,7 +300,7 @@ export async function syncCatalog(): Promise<CatalogFile> {
             nodeMap.set(type, {
               name: type,
               displayName: String(node.name || type.split(".").pop() || type),
-              description: `Node type extracted from workflow: ${(wf as Record<string, unknown>).name}`,
+              description: `Node type extracted from workflow: ${wf.name}`,
               group: [],
               version: typeof node.typeVersion === "number" ? [node.typeVersion as number] : [1],
               inputs: ["main"],

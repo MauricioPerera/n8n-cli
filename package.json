@@ -1,9 +1,13 @@
 {
   "name": "n8n-cli",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "CLI for the n8n REST API — designed for AI agents and automation pipelines",
   "main": "dist/index.js",
   "bin": { "n8n-cli": "dist/index.js" },
+  "exports": {
+    ".": "./dist/index.js",
+    "./lib": "./dist/lib.js"
+  },
   "keywords": ["n8n", "cli", "workflow", "automation", "api", "ai-agent"],
   "author": "Mauricio Perera",
   "license": "MIT",
@@ -25,7 +29,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "axios": "^1.7.7",
     "commander": "^12.1.0"
   },
   "devDependencies": {

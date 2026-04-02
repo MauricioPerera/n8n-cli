@@ -7,7 +7,7 @@ CLI for the n8n REST API. Designed for AI agents and automation pipelines.
 - **Multi-instance profiles** — manage local, staging, production from one CLI
 - **Node catalog with search** — discover n8n nodes and their parameters before building workflows
 - **Zero config** — works with env vars or profile files
-- **Only 2 runtime dependencies** — axios + commander
+- **Only 1 runtime dependency** — commander (uses Node.js native `fetch`)
 
 ## Quick Start
 
@@ -95,7 +95,8 @@ The catalog is stored per-profile at `~/.n8n-cli/catalog/{profileName}.json`.
 **Extraction strategies** (automatic fallback):
 1. `/types/nodes.json` — static node catalog
 2. `/api/v1/node-types` — public API (n8n >= 1.113)
-3. Workflow analysis — extracts unique node types from existing workflows
+3. `/rest/node-types` — internal API (cookie auth)
+4. Workflow analysis — extracts unique node types from existing workflows
 
 ## Command Reference
 
@@ -266,20 +267,65 @@ n8n-cli nodes list --category ai | jq '.data[].n8nType'
 
 ## Testing
 
+### Integration Tests
+
 ```bash
 npm test                           # Test default profile
 npm run test:all                   # Test ALL configured profiles
 node tests/run.js --profile prod   # Test a specific profile
 ```
 
-The test suite runs 116+ integration tests covering all command groups, CRUD operations, pagination, field filtering, error handling, and the node catalog.
+### Comprehensive Test Suite
+
+A full verification suite (`tests/suite.js`) covering **420+ assertions** across all command groups:
+
+```bash
+node tests/suite.js                        # Test default profile
+node tests/suite.js --profile local        # Test specific profile
+node tests/suite.js --all-profiles         # Test every configured profile
+node tests/suite.js --group workflows      # Run only one group
+node tests/suite.js --verbose              # Show details on failure
+```
+
+**Coverage by group:**
+
+| Group | Assertions | What it verifies |
+|-------|-----------|-----------------|
+| profile | 58 | CRUD (add/show/update/use/remove), API key masking, error paths (duplicate, nonexistent) |
+| workflows | 57 | List (filters, --all, --fields), CRUD, activate/deactivate with webhook trigger, set-tags, stdin input, error paths |
+| executions | 25 | List (status/workflow filters), get, --include-data, --fields, retry, error paths |
+| credentials | 21 | List, schema discovery, create via stdin, delete, graceful handling of version-specific API differences (405) |
+| tags | 33 | CRUD, assign/unassign tags to workflows, duplicate name detection |
+| variables | 1+ | Enterprise feature detection with graceful skip |
+| users | 16 | List, --include-role, get by ID, error paths |
+| projects | 1+ | Enterprise feature detection |
+| audit | 5 | Full run + category-filtered run |
+| nodes | 72 | Sync, list (5 categories), search (6 queries + score ordering + limit), get (known nodes + fuzzy suggestions), --fields |
+| meta | 47 | Full schema validation (groups, exit_codes, patterns, environment), workflow-template, credential-guide, ai-recipes |
+| help-ai | 36 | list-groups, every group individually, all, nonexistent group error |
+| edge-cases | 22 | --fields on empty results, --limit 0/250, --profile invalid, JSON response consistency, clean stderr on success |
+
+Results are saved to `tests/suite-results.json` after each run.
+
+### Benchmark
+
+Compare latency and throughput across profiles:
+
+```bash
+node tests/benchmark.js                    # Benchmark all profiles
+node tests/benchmark.js --profile local    # Benchmark one profile
+node tests/benchmark.js --iterations 5     # Custom iteration count
+```
+
+Measures avg/min/max/p95 latency for read ops, write cycles (create+delete), node catalog, meta commands, audit, and error handling. Results saved to `tests/benchmark-results.json`.
 
 ## Project Structure
 
 ```
 src/
   index.ts            # CLI entry point, Commander setup
-  api.ts              # HTTP client (axios), JSON I/O helpers
+  api.ts              # HTTP client (native fetch), JSON I/O helpers
+  lib.ts              # Library exports (config + catalog, no Commander dependency)
   config.ts           # Profile management, config file loading
   catalog.ts          # Node extraction, caching, search engine
   commands/
@@ -292,6 +338,8 @@ src/
     help.ts           # meta schema, patterns, help-ai reference
 tests/
   run.js              # Integration test runner (multi-profile)
+  suite.js            # Comprehensive test suite (420+ assertions)
+  benchmark.js        # Latency/throughput benchmark (multi-profile)
 ```
 
 ## Configuration Files
@@ -302,9 +350,61 @@ tests/
 | `~/.n8n-cli/catalog/{profile}.json` | Cached node catalogs per profile |
 | `.n8nrc` | Per-project profile overrides |
 
+## Library Usage
+
+The core modules (config, catalog, search) can be imported directly without the CLI framework:
+
+```typescript
+import {
+  loadConfig,
+  resolveProfile,
+  loadCatalog,
+  syncCatalog,
+  searchNodes,
+} from "n8n-cli/lib";
+
+// Read profiles
+const config = loadConfig();
+console.log(Object.keys(config.profiles)); // ["local", "prod", "staging"]
+
+// Load cached node catalog
+const catalog = loadCatalog("local");
+console.log(catalog.nodeCount); // 436
+
+// Search nodes
+const results = searchNodes(catalog.nodes, "send email", 5);
+results.forEach(r => console.log(r.node.n8nType, r.score));
+```
+
+This is used by [n8n-a2e](https://github.com/MauricioPerera/n8n-a2e) to read catalog files and profiles without spawning CLI subprocesses.
+
+## Security
+
+### Supply Chain
+
+As of v1.1.0, n8n-cli uses **Node.js native `fetch`** (available since Node 18) instead of axios. This eliminates the primary supply chain attack surface — the [axios npm compromise of March 2026](https://www.microsoft.com/en-us/security/blog/2026/04/01/mitigating-the-axios-npm-supply-chain-compromise/) demonstrated the risk of depending on high-profile HTTP libraries.
+
+**Runtime dependencies:** Only `commander` (CLI argument parsing). Zero HTTP libraries.
+
+### API Keys
+
+- Stored in `~/.n8n-cli/config.json` (user-readable only)
+- Masked in all display output (first 8 + last 4 chars)
+- Never logged or included in error output
+- Environment variables take priority over stored keys
+
+## Dependencies
+
+| Package | Purpose | Type |
+|---------|---------|------|
+| `commander` | CLI argument parsing | runtime |
+| `typescript` | Type checking | dev |
+| `sucrase` | Fast transpilation | dev |
+| `@types/node` | Node.js type definitions | dev |
+
 ## Related
 
-- [n8n-mcp-claude](https://github.com/MauricioPerera/n8n-mcp-claude) — MCP server with TF-IDF knowledge base for Claude Desktop
+- [n8n-a2e](https://github.com/MauricioPerera/n8n-a2e) — AI workflow composer that uses n8n-cli catalogs for node discovery
 - [n8n API docs](https://docs.n8n.io/api/)
 
 ## License
